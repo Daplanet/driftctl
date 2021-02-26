@@ -10,6 +10,7 @@ import (
 type GithubRepository interface {
 	ListRepositories() ([]string, error)
 	ListTeams() ([]int, error)
+	ListBranchProtection() ([]string, error)
 }
 
 type GithubGraphQLClient interface {
@@ -156,6 +157,58 @@ func (r githubRepository) ListTeams() ([]int, error) {
 			break
 		}
 		variables["cursor"] = githubv4.NewString(query.Organization.Teams.PageInfo.EndCursor)
+	}
+	return results, nil
+}
+
+type listBranchProtectionQuery struct {
+	Repository struct {
+		BranchProtectionRules struct {
+			Nodes []struct {
+				Id string
+			}
+			PageInfo struct {
+				EndCursor   githubv4.String
+				HasNextPage bool
+			}
+		} `graphql:"branchProtectionRules(first: 1, after: $cursor)"`
+	} `graphql:"repository(owner: $owner, name: $name)"`
+}
+
+func (r *githubRepository) ListBranchProtection() ([]string, error) {
+
+	repoList, err := r.ListRepositories()
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]string, 0)
+	query := listBranchProtectionQuery{}
+	variables := map[string]interface{}{
+		"cursor": (*githubv4.String)(nil),
+		"owner":  (githubv4.String)(r.config.getDefaultOwner()),
+		"name":   (githubv4.String)(""),
+	}
+
+	for _, repo := range repoList {
+		variables["name"] = (githubv4.String)(repo)
+		variables["cursor"] = (*githubv4.String)(nil)
+		for {
+			err := r.client.Query(r.ctx, &query, variables)
+			if err != nil {
+				return nil, err
+			}
+			for _, protection := range query.Repository.BranchProtectionRules.Nodes {
+				results = append(results, protection.Id)
+			}
+
+			variables["cursor"] = query.Repository.BranchProtectionRules.PageInfo.EndCursor
+
+			if !query.Repository.BranchProtectionRules.PageInfo.HasNextPage {
+				break
+			}
+		}
+
 	}
 	return results, nil
 }
